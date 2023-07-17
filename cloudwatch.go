@@ -2,6 +2,7 @@ package zapcloudwatch
 
 import (
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"sync"
 	"time"
 
@@ -23,6 +24,22 @@ type CloudwatchHook struct {
 	svc               *cloudwatchlogs.CloudWatchLogs
 	Async             bool // if async is true, send a message asynchronously.
 	m                 sync.Mutex
+}
+
+type PikaCore struct {
+	zapcore.Core
+}
+
+func (c *PikaCore) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(entry.Level) {
+		return checked.AddCore(entry, c)
+	}
+	return checked
+}
+
+func (c *PikaCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	spew.Dump(entry, fields)
+	return c.Core.Write(entry, fields)
 }
 
 // NewCloudwatchHook creates a new zap hook for cloudwatch
