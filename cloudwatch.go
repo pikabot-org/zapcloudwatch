@@ -1,8 +1,8 @@
 package zapcloudwatch
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"sync"
 	"time"
 
@@ -38,8 +38,27 @@ func (c *PikaCore) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *za
 }
 
 func (c *PikaCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	spew.Dump(entry, fields)
-	return c.Core.Write(entry, fields)
+	fieldsMap := make(map[string]interface{})
+	for _, field := range fields {
+		switch field.Type {
+		case zapcore.StringType:
+			fieldsMap[field.Key] = field.String
+		case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type, zapcore.Uint64Type:
+			fieldsMap[field.Key] = field.Integer
+		case zapcore.BoolType:
+			fieldsMap[field.Key] = field.Integer == 1
+		default:
+			fieldsMap[field.Key] = field.Interface
+		}
+	}
+
+	fieldsJson, err := json.Marshal(fieldsMap)
+	if err != nil {
+		return err
+	}
+	entry.Message = fmt.Sprintf("%s %s", entry.Message, string(fieldsJson))
+
+	return c.Core.Write(entry, nil)
 }
 
 // NewCloudwatchHook creates a new zap hook for cloudwatch
