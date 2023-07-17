@@ -56,9 +56,17 @@ func (c *PikaCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	if err != nil {
 		return err
 	}
+
 	entry.Message = fmt.Sprintf("%s %s", entry.Message, string(fieldsJson))
 
-	return c.Core.Write(entry, nil)
+	// Creating new Field with the formatted string
+	additionalField := zapcore.Field{
+		Key:    "formattedFields",
+		String: string(fieldsJson),
+		Type:   zapcore.StringType,
+	}
+
+	return c.Core.Write(entry, []zapcore.Field{additionalField})
 }
 
 // NewCloudwatchHook creates a new zap hook for cloudwatch
