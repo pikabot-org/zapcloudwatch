@@ -1,15 +1,15 @@
 package zapcloudwatch
 
 import (
+	"container/list"
 	"encoding/json"
 	"fmt"
-	"sync"
-	"time"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"go.uber.org/zap/zapcore"
+	"sync"
+	"time"
 )
 
 // CloudwatchHook is a zap Hook for dispatching messages to the specified
@@ -30,6 +30,38 @@ type PikaCore struct {
 	zapcore.Core
 }
 
+type EntryQueue struct {
+	sync.Mutex
+	entries *list.List
+}
+
+func (eq *EntryQueue) Push(entry zapcore.Entry) {
+	eq.Lock()
+	defer eq.Unlock()
+
+	eq.entries.PushBack(entry)
+}
+
+func (eq *EntryQueue) Pop() *zapcore.Entry {
+	eq.Lock()
+	defer eq.Unlock()
+
+	if eq.entries.Len() == 0 {
+		return nil
+	}
+
+	e := eq.entries.Front()
+	eq.entries.Remove(e)
+
+	entry := e.Value.(zapcore.Entry)
+
+	return &entry
+}
+
+var msgCache = EntryQueue{
+	entries: list.New(),
+}
+
 func (c *PikaCore) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *zapcore.CheckedEntry {
 	if c.Enabled(entry.Level) {
 		return checked.AddCore(entry, c)
@@ -38,6 +70,7 @@ func (c *PikaCore) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *za
 }
 
 func (c *PikaCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	// Original conversion of fields to a map.
 	fieldsMap := make(map[string]interface{})
 	for _, field := range fields {
 		switch field.Type {
@@ -59,14 +92,10 @@ func (c *PikaCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 
 	entry.Message = fmt.Sprintf("%s %s", entry.Message, string(fieldsJson))
 
-	// Creating new Field with the formatted string
-	additionalField := zapcore.Field{
-		Key:    "formattedFields",
-		String: string(fieldsJson),
-		Type:   zapcore.StringType,
-	}
+	msgCache.Push(entry)
 
-	return c.Core.Write(entry, []zapcore.Field{additionalField})
+	// Continue with your existing code to send the log to AWS CloudWatch.
+	return c.Core.Write(entry, fields)
 }
 
 // NewCloudwatchHook creates a new zap hook for cloudwatch
@@ -86,6 +115,11 @@ func (ch *CloudwatchHook) GetHook() (func(zapcore.Entry) error, error) {
 	var cloudwatchWriter = func(e zapcore.Entry) error {
 		if !ch.isAcceptedLevel(e.Level) {
 			return nil
+		}
+
+		modifiedEntry := msgCache.Pop()
+		if modifiedEntry != nil {
+			e = *modifiedEntry
 		}
 
 		event := &cloudwatchlogs.InputLogEvent{
